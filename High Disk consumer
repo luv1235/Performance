@@ -1,0 +1,51 @@
+CREATE proc [dbo].[util_diskUsageBySpid_prc] as   
+  
+set nocount on  
+  
+declare @physical_io1 table (spid int, physical_io int)  
+  
+insert      @physical_io1  
+select      isnull(spid, -1) as 'spid'  
+,     sum(physical_io) as 'physical_io'  
+from  master.dbo.sysprocesses  
+group by spid  
+with rollup  
+  
+waitfor delay '0:00:00.5'  
+  
+  
+declare @physical_io2 table (spid int, physical_io int)  
+  
+insert      @physical_io2  
+select      isnull(spid, -1) as 'spid'  
+,     sum(physical_io) as 'physical_io'  
+from  master.dbo.sysprocesses  
+group by spid  
+with rollup  
+  
+declare @totalDelta numeric(9,2)  
+  
+select @totalDelta = b.physical_io - a.physical_io  
+from @physical_io1 a  
+inner join @physical_io2 b  
+ on a.spid = b.spid  
+where a.spid = -1 -- total  
+  
+  
+select      distinct  
+a.spid, (((b.physical_io - a.physical_io) / @totalDelta) * 100) as 'percentphysical_io', s.hostname, s.program_name, s.loginame ,  job.name  as JobName  
+from @physical_io1 a  
+inner join @physical_io2 b  
+ on a.spid = b.spid  
+inner join master.dbo.sysprocesses s  
+ on a.spid = s.spid  
+left outer join JobLookup_tbl job (nolock)   
+      on job.job_idstr = convert(varchar(100),   
+                                    substring(  
+                                          rtrim(replace(program_name, 'SQLAgent - TSQL JobStep (Job ',''))  
+                                          , 1, charindex(' : Step', rtrim(replace(program_name, 'SQLAgent - TSQL JobStep (Job ',''))))  
+                                    )  
+where a.spid > -1  
+and (b.physical_io - a.physical_io) > 0  
+order by 2 desc   
+;
