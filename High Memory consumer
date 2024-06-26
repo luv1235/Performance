@@ -1,0 +1,45 @@
+CREATE  proc [dbo].[util_memUsageBySpid_prc] as   
+  
+set nocount on  
+  
+declare @mem1 table (spid int, memusage int)  
+  
+insert @mem1  
+select isnull(spid, -1) as 'spid'  
+, sum(memusage) as 'memusage'  
+from master.dbo.sysprocesses  
+group by spid  
+with rollup  
+  
+waitfor delay '0:00:00.5'  
+  
+  
+declare @mem2 table (spid int, memusage int)  
+  
+insert @mem2  
+select isnull(spid, -1) as 'spid'  
+, sum(memusage) as 'memusage'  
+from master.dbo.sysprocesses  
+group by spid  
+with rollup  
+  
+declare @totalDelta numeric(9,2)  
+  
+select @totalDelta = b.memusage - a.memusage  
+from @mem1 a  
+inner join @mem2 b  
+ on a.spid = b.spid  
+where a.spid = -1 -- total  
+  
+  
+select distinct  
+a.spid, (((b.memusage - a.memusage) / @totalDelta) * 100) as 'percentmem', s.hostname, s.program_name, s.loginame  
+from @mem1 a  
+inner join @mem2 b  
+ on a.spid = b.spid  
+inner join master.dbo.sysprocesses s  
+ on a.spid = s.spid  
+where a.spid > -1  
+and (b.memusage - a.memusage) > 0  
+order by 2 desc   
+;
