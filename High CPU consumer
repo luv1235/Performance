@@ -1,0 +1,80 @@
+CREATE procedure [dbo].[util_cpuUsageBySpid_prc]    
+as    
+set nocount on;    
+set ansi_warnings off;    
+    
+declare @cpu table (    
+ session_id smallint not null ,    
+ cpu_time int null ,    
+ firstPassFlag bit not null    
+);    
+    
+insert @cpu    
+select    
+ session_id    
+, sum(cpu_time) as cpu_time    
+, 1 as firstPassFlag    
+from sys.dm_exec_requests    
+where session_id > 20    
+group by session_id;    
+    
+waitfor delay '0:00:0.5';    
+    
+insert @cpu    
+select    
+ session_id    
+, sum(cpu_time) as cpu_time    
+, 0 as firstPassFlag    
+from sys.dm_exec_requests    
+where session_id > 20    
+group by session_id;    
+    
+with summary as     
+(    
+ select    
+  firstPassFlag    
+ , sum(cpu_time) as cpu_time    
+ from @cpu    
+ group by firstPassFlag    
+), delta as    
+(    
+ select s.cpu_time - f.cpu_time as total_delta    
+ from summary f    
+  cross join summary s    
+ where f.firstPassFlag = 1    
+ and s.firstPassFlag = 0    
+)    
+select    
+ f.session_id    
+, convert(numeric(5,2), (100. * (((s.cpu_time - f.cpu_time) * 1.) / (d.total_delta * 1.)))) as 'percentCPU'    
+, convert(char(8), getdate() - req.start_time, 108) as run_duration    
+, substring(st.text, (req.statement_start_offset/2)+1,     
+  ((case req.statement_end_offset    
+  when -1 then datalength(st.text)    
+  else req.statement_end_offset    
+  end - req.statement_start_offset)/2) + 1) as statement_text    
+--, dbo.spidToJobName_fn(s.session_id) as job_name    
+, job.name as job_name  
+, sess.login_name    
+, sess.host_name    
+, sess.program_name    
+from @cpu f    
+ inner join @cpu s    
+ on f.session_id = s.session_id    
+ and s.firstPassFlag = 0    
+ inner join sys.dm_exec_requests req    
+ on f.session_id = req.session_id    
+ inner join sys.dm_exec_sessions sess    
+ on f.session_id = sess.session_id    
+ left outer join JobLookup_tbl job (nolock)  
+ on job.job_idstr = convert(varchar(100),   
+                                    substring(  
+                                          rtrim(replace(sess.program_name, 'SQLAgent - TSQL JobStep (Job ',''))  
+                                          , 1, charindex(' : Step', rtrim(replace(sess.program_name, 'SQLAgent - TSQL JobStep (Job ',''))))  
+                                    )  
+ cross join delta d    
+ cross apply sys.dm_exec_sql_text(req.sql_handle) as st    
+where f.firstPassFlag = 1    
+and d.total_delta <> 0    
+order by percentCPU desc;   
+;
