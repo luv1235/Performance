@@ -1,0 +1,22 @@
+/*SPACE CONSUMED IN TEMPDB, BY VERSION STORE OF EACH DATABASE*/
+SELECT DB_NAME(database_id) AS 'Database Name'
+	,reserved_space_kb/1024  AS 'Space(MB) used in tempdb for version store'
+FROM sys.dm_tran_version_store_space_usage
+WHERE reserved_space_kb > 0
+ORDER BY 2 DESC;
+
+/*FIND TRANSACTIONS USING VERSION STORE*/
+SELECT a.session_id, d.name, a.elapsed_time_seconds/60.00 AS elapsed_time_mins,
+b.open_tran, b.status,b.program_name,  a.transaction_id, a.transaction_sequence_num
+FROM sys.dm_tran_active_snapshot_database_transactions a
+join sys.sysprocesses b on a.session_id = b.spid
+join sys.databases d on b.dbid=d.database_id
+ORDER BY 3 DESC
+GO
+ 
+--Get sleeping transactions by database
+sp_whoisactive @show_sleeping_spids = 1
+	,@filter_type = 'database'
+	,@filter = 'CALCS'
+	,@sort_order = 'tempdb_allocation desc'
+	,@output_column_list = '[session_id][dd hh:mm:ss.mss][open_tran_count][status][database_name][sql_text][program_name][tempdb%][%]'
